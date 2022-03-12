@@ -1,0 +1,101 @@
+
+trigger: none
+pool:
+  name: BuildClientPool
+
+#Definition variables in this Yaml file
+variables:
+  tstIp85-194: '10.0.85.194'
+  tstuser85-194: 'agri-bank\mey-jalali'
+  TstDest85-194: 'd:\inetpub\Nejati\Amlak'
+  solution: '**/*.sln'
+  BuildPlatform: 'Any CPU'
+  BuildConfiguration: 'Release'
+  PublishPath: \\10.0.85.77\Publish
+
+#Trigger between 2 pipeline  
+resources:
+  pipelines:
+  - pipeline: AmlakBuildDesign
+    source: AmlakBuildDesign
+    trigger: true
+
+stages:
+  - stage: CI
+    pool: BuildClientPool
+    jobs:
+    - job: 'Build'
+      steps:
+          - download: AmlakBuildDesign
+            artifact: source
+            displayName: download AmlakBuildDesign
+            
+          - task: CopyFiles@2
+            displayName: 'Copy Files from Download to: $(Build.SourcesDirectory)'
+            inputs:
+               SourceFolder: '$(PIPELINE.WORKSPACE)/AmlakBuildDesign/source/Main'
+               Contents: '**'
+               TargetFolder: '$(Build.SourcesDirectory)'
+            condition: succeededOrFailed()
+
+          - task: VSBuild@1
+            displayName: 'Build Project'
+            inputs:
+                solution: '$(solution)'
+                platform: '$(BuildPlatform)'
+                configuration: '$(BuildConfiguration)'
+                logProjectEvents: true
+
+          - task: CopyFiles@2
+            displayName: 'Copy Files to: $(build.artifactstagingdirectory)'
+            inputs:
+                Contents: |
+                   **\Amlak98\**
+                   !**\**web.config**
+                   !**\**appsettings.json
+                   !**\**config.xml**
+                   !**\log\**
+                TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: CopyFiles@2
+            displayName: 'Copy Backup from Artifacts to: $(PublishPath)'
+            inputs:
+               SourceFolder: '$(Build.ArtifactStagingDirectory)'  
+               Contents: '**'
+               TargetFolder: '$(PublishPath)\$(Build.DefinitionName)\$(Build.BuildNumber)'
+               OverWrite: false
+            condition: succeededOrFailed()
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Create Artifact'
+            inputs:
+               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+               ArtifactName: 'AmlakArtifact'
+
+          - task: DeleteFiles@1
+            displayName: 'Delete files from S Folder'
+            inputs:
+              SourceFolder: '$(Build.Repository.LocalPath)' 
+              contents: |
+                   **
+              RemoveSourceFolder: true
+
+  - stage: CD
+    jobs:
+    - deployment: 'Deploy'
+      displayName: 'Deploy to UAT'
+      environment: srv85195
+      strategy:
+       runOnce:
+        deploy:
+         steps:
+          - download: current
+            artifact: AmlakArtifact
+          - task: WindowsMachineFileCopy@2
+            displayName: 'Copy files to : Test Server 85.194'
+            inputs:
+              SourcePath: '$(PIPELINE.WORKSPACE)/AmlakArtifact/Amlak98'
+              MachineNames: '$(tstIp85-194)'
+              AdminUserName: '$(tstuser85-194)'
+              AdminPassword: '$(tstPassword85-194)'
+              TargetPath: '$(TstDest85-194)'
